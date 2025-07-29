@@ -29,51 +29,6 @@ export async function sendMessage(messages, model) {
   }
 }
 
-/**
- * Send a message to the chat API with streaming support using OpenAI format
- * @param {Array} messages - Array of message objects with role and content
- * @param {string} model - The selected model
- * @param {function} onChunk - Callback function to handle each chunk of data
- * @param {function} onComplete - Callback function when the stream is complete
- * @param {function} onError - Callback function to handle errors
- * @returns {function} - Function to cancel the request
- */
-export function streamMessage(messages, model, onChunk, onComplete, onError) {
-  const controller = new AbortController()
-  
-  apiClient.post('/chat/completions', 
-    {
-      model: model,
-      messages: messages,
-      stream: true
-    },
-    { 
-      responseType: 'stream',
-      signal: controller.signal,
-      onDownloadProgress: (progressEvent) => {
-        // This is a simplified implementation
-        // In a real scenario, you would parse the stream properly
-        try {
-          const chunk = progressEvent.currentTarget.response
-          if (chunk) {
-            onChunk(chunk)
-          }
-        } catch (error) {
-          onError(error)
-        }
-      }
-    }
-  )
-  .then(() => onComplete())
-  .catch((error) => {
-    if (error.name !== 'AbortError') {
-      onError(error)
-    }
-  })
-  
-  // Return a function to cancel the request
-  return () => controller.abort()
-}
 
 /**
  * Process the stream using the Fetch API with proper SSE handling
@@ -103,7 +58,7 @@ export function streamMessageWithFetch(messages, model, onChunk, onComplete, onE
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = ''; // Buffer to store incomplete lines
-    
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -158,7 +113,6 @@ function processSSELine(line, onChunk) {
   if (line === 'data: [DONE]') {
     return;
   }
-  
   // Process data lines
   if (line.startsWith('data:')) {
     onChunk(line);
@@ -167,6 +121,5 @@ function processSSELine(line, onChunk) {
 
 export default {
   sendMessage,
-  streamMessage,
   streamMessageWithFetch
 }

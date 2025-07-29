@@ -22,19 +22,20 @@ export const useChatStore = defineStore('chat', () => {
 
   const updateLastMessageContent = (content) => {
     if (messages.value.length > 0) {
-      const lastMessage = messages.value[messages.value.length - 1]
-      if (lastMessage.role === 'assistant') {
-        // Handle SSE format if needed
-        try {
-          lastMessage.content += content.replace('data:', '');
-        } catch (e) {
-          // Not valid JSON or not the format we expect
-          console.warn('Could not parse stream data:', content);
+      var lastMessage = messages.value[messages.value.length - 1]
+      if( lastMessage.role !== 'assistant') {
+        // Add placeholder for assistant message
+        const assistantMessage = {
+          id: Date.now() + 1,
+          role: 'assistant',
+          content: '',
+          timestamp: new Date(),
+          isStreaming: true
         }
-      } else {
-        // Regular content
-        lastMessage.content += content;
+        addMessage(assistantMessage)
       }
+      lastMessage = messages.value[messages.value.length - 1]
+      lastMessage.content += content.replace('data:', '');
     }
   }
   
@@ -61,15 +62,7 @@ export const useChatStore = defineStore('chat', () => {
     }
     addMessage(userMessage)
 
-    // Add placeholder for assistant message
-    const assistantMessage = {
-      id: Date.now() + 1,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date(),
-      isStreaming: true
-    }
-    addMessage(assistantMessage)
+    
 
     // Cancel any existing stream
     if (currentStream) {
