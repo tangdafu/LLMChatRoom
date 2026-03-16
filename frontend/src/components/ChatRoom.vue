@@ -1,7 +1,8 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import MessageList from './MessageList.vue'
 import ModelSelector from './ModelSelector.vue'
+import ConnectionModeSelector from './ConnectionModeSelector.vue'
 import ChatInput from './ChatInput.vue'
 import { useChatStore } from '../stores/chat'
 
@@ -26,16 +27,26 @@ onMounted(() => {
   chatStore.addMessage({
     id: Date.now(),
     role: 'assistant',
-    content: '你好! 我是大模型助手，有什么能够帮助您的吗?',
+    content: '你好! 我是大模型助手，有什么能够帮助您的吗？\n\n当前支持两种连接方式：\n• HTTP - 传统的 SSE 流式传输\n• WebSocket - 长连接实时通信（点击左上角按钮切换）',
     timestamp: new Date()
   })
+})
+
+onUnmounted(() => {
+  // Clean up WebSocket connection when component unmounts
+  if (chatStore.wsConnected) {
+    chatStore.disconnectWebSocket()
+  }
 })
 </script>
 
 <template>
   <div class="chat-room">
     <header class="chat-header">
-      <h1>LLM Chat Room</h1>
+      <div class="header-left">
+        <h1>LLM Chat Room</h1>
+        <ConnectionModeSelector :disabled="loading" />
+      </div>
       <ModelSelector />
     </header>
     
@@ -72,6 +83,12 @@ onMounted(() => {
   padding: 1rem 2rem;
   background: rgba(0, 0, 0, 0.4);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
 }
 
 .chat-header h1 {

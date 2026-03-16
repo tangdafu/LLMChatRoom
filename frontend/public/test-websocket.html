@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 连接测试</title>
+    <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: white;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .connected {
+            background: #0f3460;
+            border-left: 4px solid #4ade80;
+        }
+        .disconnected {
+            background: #0f3460;
+            border-left: 4px solid #f87171;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .connect-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .disconnect-btn {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+        .send-btn {
+            background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+            color: white;
+        }
+        #logs {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px;
+            border-radius: 5px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin-top: 20px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid transparent;
+        }
+        .log-info {
+            border-left-color: #4ade80;
+            color: #4ade80;
+        }
+        .log-error {
+            border-left-color: #f87171;
+            color: #f87171;
+        }
+        .log-warn {
+            border-left-color: #fbbf24;
+            color: #fbbf24;
+        }
+        .log-debug {
+            border-left-color: #60a5fa;
+            color: #60a5fa;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔌 WebSocket 连接测试工具</h1>
+    
+    <div id="status" class="status disconnected">
+        <strong>状态：</strong>未连接
+    </div>
+    
+    <div>
+        <button class="connect-btn" onclick="connect()">连接</button>
+        <button class="disconnect-btn" onclick="disconnect()">断开</button>
+        <button class="send-btn" onclick="sendMessage()" id="sendBtn" disabled>发送消息</button>
+    </div>
+    
+    <div id="logs"></div>
+    
+    <script>
+        let client = null;
+        let sessionId = null;
+        
+        function addLog(message, type = 'debug') {
+            const logs = document.getElementById('logs');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            logs.appendChild(entry);
+            logs.scrollTop = logs.scrollHeight;
+        }
+        
+        function updateStatus(connected) {
+            const status = document.getElementById('status');
+            const sendBtn = document.getElementById('sendBtn');
+            
+            if (connected) {
+                status.className = 'status connected';
+                status.innerHTML = '<strong>状态：</strong>✅ 已连接';
+                sendBtn.disabled = false;
+            } else {
+                status.className = 'status disconnected';
+                status.innerHTML = '<strong>状态：</strong>❌ 未连接';
+                sendBtn.disabled = true;
+            }
+        }
+        
+        function connect() {
+            const brokerURL = 'ws://localhost:9090/ws-chat';
+            addLog(`正在连接到 ${brokerURL}...`, 'info');
+            
+            sessionId = 'test_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            addLog(`生成会话 ID: ${sessionId}`, 'debug');
+            
+            client = new StompJs.Client({
+                brokerURL: brokerURL,
+                debug: (str) => addLog(str, 'debug'),
+                reconnectDelay: 5000,
+                onConnect: () => {
+                    addLog('✅ WebSocket 连接成功!', 'info');
+                    updateStatus(true);
+                    
+                    // Subscribe to response queue
+                    const subscription = client.subscribe(`/user/queue/chat.response.${sessionId}`, (message) => {
+                        addLog(`📨 收到响应：${message.body}`, 'info');
+                    });
+                    
+                    addLog(`已订阅队列：/user/queue/chat.response.${sessionId}`, 'info');
+                    
+                    // Subscribe to complete queue
+                    client.subscribe(`/user/queue/chat.complete.${sessionId}`, () => {
+                        addLog('✅ 流式传输完成', 'info');
+                    });
+                    
+                    // Subscribe to error queue
+                    client.subscribe(`/user/queue/chat.error.${sessionId}`, (message) => {
+                        addLog(`❌ 错误：${message.body}`, 'error');
+                    });
+                },
+                onStompError: (frame) => {
+                    addLog(`❌ STOMP 错误：${frame.headers.message}`, 'error');
+                    updateStatus(false);
+                },
+                onDisconnect: () => {
+                    addLog('🔌 WebSocket 已断开', 'warn');
+                    updateStatus(false);
+                },
+                onClose: (evt) => {
+                    addLog(`WebSocket 连接关闭：${evt.code} ${evt.reason}`, 'warn');
+                    updateStatus(false);
+                },
+                onWebSocketError: (evt) => {
+                    addLog(`WebSocket 错误：${evt.type}`, 'error');
+                    updateStatus(false);
+                }
+            });
+            
+            client.activate();
+            
+            // Timeout handling
+            setTimeout(() => {
+                if (!client?.connected) {
+                    addLog('❌ 连接超时（5 秒）', 'error');
+                    updateStatus(false);
+                }
+            }, 5000);
+        }
+        
+        function disconnect() {
+            if (client) {
+                addLog('正在断开连接...', 'warn');
+                client.deactivate();
+                client = null;
+                updateStatus(false);
+                addLog('已手动断开连接', 'warn');
+            }
+        }
+        
+        function sendMessage() {
+            if (!client || !client.connected) {
+                addLog('❌ 未连接到 WebSocket 服务器', 'error');
+                return;
+            }
+            
+            const payload = {
+                model: 'qwen:7b',
+                messages: [
+                    { role: 'user', content: '你好，请介绍一下你自己' }
+                ],
+                stream: true
+            };
+            
+            const destination = `/app/chat/completions/${sessionId}`;
+            addLog(`发送消息到 ${destination}`, 'info');
+            addLog(`消息内容：${JSON.stringify(payload)}`, 'debug');
+            
+            client.publish({
+                destination: destination,
+                body: JSON.stringify(payload)
+            });
+            
+            addLog('✅ 消息已发送', 'info');
+        }
+        
+        // Initialize
+        updateStatus(false);
+        addLog('页面加载完成，请点击"连接"按钮开始测试', 'info');
+    </script>
+</body>
+</html>

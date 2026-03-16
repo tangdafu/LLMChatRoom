@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { streamMessageWithFetch } from '../api/chat'
+import webSocketChatService from '../services/websocket'
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref([])
@@ -15,6 +16,11 @@ export const useChatStore = defineStore('chat', () => {
   
   // To track the current streaming request
   let currentStream = null
+  
+  // WebSocket related state
+  const connectionMode = ref('http') // 'http' or 'websocket'
+  const wsConnected = ref(false)
+  let wsUnsubscribe = null
 
   const addMessage = (message) => {
     messages.value.push(message)
@@ -51,6 +57,69 @@ export const useChatStore = defineStore('chat', () => {
   const setSelectedModel = (modelId) => {
     selectedModel.value = modelId
   }
+  
+  const setConnectionMode = (mode) => {
+    connectionMode.value = mode
+  }
+  
+  const setWsConnected = (connected) => {
+    wsConnected.value = connected
+  }
+  
+  /**
+   * Initialize WebSocket connection
+   */
+  const initWebSocket = async () => {
+    if (connectionMode.value !== 'websocket') return
+    
+    console.log('🔌 Chat Store: Initializing WebSocket...')
+    
+    try {
+      await webSocketChatService.connect()
+      console.log('✅ Chat Store: WebSocket connected, setting up subscriptions')
+      setWsConnected(true)
+      
+      // Subscribe to responses
+      wsUnsubscribe = webSocketChatService.subscribeToResponse(
+        (text) => {
+          console.log('📨 Received message chunk:', text)
+          updateLastMessageContent(text)
+        },
+        () => {
+          console.log('✅ Chat stream completed')
+          finishLastMessage()
+        },
+        (error) => {
+          console.error('❌ WebSocket error in subscription:', error)
+          finishLastMessage()
+        }
+      )
+      console.log('✅ Chat Store: Subscriptions active')
+    } catch (error) {
+      console.error('❌ Chat Store: Failed to connect WebSocket:', error)
+      setWsConnected(false)
+      throw error
+    }
+  }
+  
+  /**
+   * Disconnect WebSocket
+   */
+  const disconnectWebSocket = () => {
+    if (wsUnsubscribe) {
+      wsUnsubscribe()
+      wsUnsubscribe = null
+    }
+    webSocketChatService.disconnect()
+    setWsConnected(false)
+  }
+  
+  /**
+   * Check if WebSocket is available and connected
+   */
+  const isWebSocketReady = () => {
+    return connectionMode.value === 'websocket' && wsConnected.value
+  }
 
   const sendMessage = async (content) => {
     // Add user message
@@ -61,8 +130,6 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: new Date()
     }
     addMessage(userMessage)
-
-    
 
     // Cancel any existing stream
     if (currentStream) {
@@ -75,30 +142,45 @@ export const useChatStore = defineStore('chat', () => {
       content: msg.content
     }))
 
-    // Call the streaming API with Fetch API
-    return new Promise((resolve, reject) => {
-      currentStream = streamMessageWithFetch(
-        openAiMessages,
-        selectedModel.value,
-        (chunk) => {
-          // Handle each chunk of data
-          updateLastMessageContent(chunk)
-        },
-        () => {
-          // Stream complete
-          finishLastMessage()
-          currentStream = null
+    // Use WebSocket or HTTP based on connection mode
+    if (connectionMode.value === 'websocket' && wsConnected.value) {
+      // Send via WebSocket
+      return new Promise((resolve, reject) => {
+        try {
+          webSocketChatService.sendMessage(openAiMessages, selectedModel.value)
           resolve()
-        },
-        (error) => {
-          // Handle error
-          console.error('Streaming error:', error)
+        } catch (error) {
+          console.error('WebSocket send error:', error)
           finishLastMessage()
-          currentStream = null
           reject(error)
         }
-      )
-    })
+      })
+    } else {
+      // Send via HTTP SSE
+      return new Promise((resolve, reject) => {
+        currentStream = streamMessageWithFetch(
+          openAiMessages,
+          selectedModel.value,
+          (chunk) => {
+            // Handle each chunk of data
+            updateLastMessageContent(chunk)
+          },
+          () => {
+            // Stream complete
+            finishLastMessage()
+            currentStream = null
+            resolve()
+          },
+          (error) => {
+            // Handle error
+            console.error('Streaming error:', error)
+            finishLastMessage()
+            currentStream = null
+            reject(error)
+          }
+        )
+      })
+    }
   }
   
   const cancelStreaming = () => {
@@ -113,9 +195,16 @@ export const useChatStore = defineStore('chat', () => {
     messages,
     selectedModel,
     models,
+    connectionMode,
+    wsConnected,
     addMessage,
     updateLastMessageContent,
     setSelectedModel,
+    setConnectionMode,
+    setWsConnected,
+    initWebSocket,
+    disconnectWebSocket,
+    isWebSocketReady,
     sendMessage,
     cancelStreaming
   }
